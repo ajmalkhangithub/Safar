@@ -51,8 +51,16 @@ const bookingRequestSchema = new mongoose.Schema(
     respondedAt: {
       type: Date,
     },
-    paidAt: {
-      type: Date,
+    // Tracking
+    deliveryStatus: {
+      type: String,
+      enum: ["pending", "en_route", "delivered"],
+      default: "pending",
+    },
+    travelerLocation: {
+      lat: { type: Number },
+      lng: { type: Number },
+      updatedAt: { type: Date },
     },
   },
   { timestamps: true }

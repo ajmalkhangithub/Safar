@@ -2,54 +2,79 @@ import Wallet from "../models/Wallet.js";
 import BookingRequest from "../models/BookingRequest.js";
 import User from "../models/User.js";
 
+const getOrCreateWallet = async (userId) => {
+  let wallet = await Wallet.findOne({ userId });
+  if (!wallet) {
+    wallet = new Wallet({ userId });
+    await wallet.save();
+  }
+  return wallet;
+};
+
+const syncWalletBalances = async (wallet, userId) => {
+  const travelerBookings = await BookingRequest.find({
+    travelerId: userId,
+    status: "accepted",
+  });
+
+  const senderBookings = await BookingRequest.find({
+    senderId: userId,
+    status: "accepted",
+  });
+
+  let totalEarnings = 0;
+  let paidEarnings = 0;
+  let pendingEarnings = 0;
+  let totalCommissions = 0;
+
+  travelerBookings.forEach((booking) => {
+    const amount = Number(booking.paymentAmount || 0);
+    totalEarnings += amount;
+    const commission = amount * (wallet.commissionRate || 0.1);
+    totalCommissions += commission;
+
+    if (booking.paymentStatus === "paid" || booking.paymentStatus === "released") {
+      paidEarnings += amount - commission;
+    } else {
+      pendingEarnings += amount - commission;
+    }
+  });
+
+  const pendingPayments = senderBookings
+    .filter((booking) => booking.paymentStatus !== "paid" && booking.paymentStatus !== "released")
+    .reduce((sum, booking) => sum + Number(booking.paymentAmount || 0), 0);
+
+  wallet.totalEarnings = totalEarnings;
+  wallet.totalCommissions = totalCommissions;
+  wallet.pendingBalance = pendingEarnings;
+  wallet.pendingPayments = pendingPayments;
+  wallet.availableBalance = Math.max(Number(wallet.availableBalance || 0), paidEarnings);
+  await wallet.save();
+
+  return {
+    totalEarnings,
+    paidEarnings,
+    pendingEarnings,
+    pendingPayments,
+  };
+};
+
 // Get or create wallet for user
 export const getWallet = async (req, res) => {
   try {
     const { userId } = req.params;
-
-    let wallet = await Wallet.findOne({ userId });
-
-    if (!wallet) {
-      // Create new wallet
-      wallet = new Wallet({ userId });
-      await wallet.save();
-    }
-
-    // Calculate current balances from bookings
-    const acceptedBookings = await BookingRequest.find({
-      travelerId: userId,
-      status: "accepted",
-    });
-
-    let totalEarnings = 0;
-    let paidEarnings = 0;
-    let pendingEarnings = 0;
-    let totalCommissions = 0;
-
-    acceptedBookings.forEach((booking) => {
-      const amount = booking.paymentAmount || 0;
-      totalEarnings += amount;
-      const commission = amount * (wallet.commissionRate || 0.1);
-      totalCommissions += commission;
-
-      if (booking.paymentStatus === "paid") {
-        paidEarnings += amount - commission;
-      } else {
-        pendingEarnings += amount - commission;
-      }
-    });
-
-    // Update wallet balances
-    wallet.totalEarnings = totalEarnings;
-    wallet.totalCommissions = totalCommissions;
-    wallet.availableBalance = paidEarnings;
-    wallet.pendingBalance = pendingEarnings;
-    wallet.totalPayouts = paidEarnings; // Assuming all paid earnings have been paid out
-    await wallet.save();
+    const wallet = await getOrCreateWallet(userId);
+    const balances = await syncWalletBalances(wallet, userId);
+    const user = await User.findById(userId).select("activeRole roles");
 
     res.status(200).json({
       message: "Wallet retrieved successfully",
-      data: wallet,
+      data: {
+        ...wallet.toObject(),
+        pendingPayments: balances.pendingPayments,
+        currency: "PKR",
+        activeRole: user?.activeRole || null,
+      },
     });
   } catch (error) {
     console.error("Get wallet error:", error);
@@ -64,12 +89,7 @@ export const getWallet = async (req, res) => {
 export const createStripeAccountLink = async (req, res) => {
   try {
     const { userId } = req.params;
-
-    let wallet = await Wallet.findOne({ userId });
-    if (!wallet) {
-      wallet = new Wallet({ userId });
-      await wallet.save();
-    }
+    const wallet = await getOrCreateWallet(userId);
 
     // TODO: In production, integrate with Stripe API
     // For now, return a mock onboarding link
@@ -140,28 +160,35 @@ export const getTransactionHistory = async (req, res) => {
     const { userId } = req.params;
     const { limit = 50 } = req.query;
 
-    const bookings = await BookingRequest.find({
+    const incomingBookings = await BookingRequest.find({
       travelerId: userId,
       status: "accepted",
     })
       .populate("packageId", "packageName")
       .populate("senderId", "name")
-      .sort({ createdAt: -1 })
-      .limit(parseInt(limit));
+      .sort({ createdAt: -1 });
 
-    const wallet = await Wallet.findOne({ userId });
+    const outgoingBookings = await BookingRequest.find({
+      senderId: userId,
+      status: "accepted",
+    })
+      .populate("packageId", "packageName")
+      .populate("travelerId", "name")
+      .sort({ createdAt: -1 });
+
+    const wallet = await getOrCreateWallet(userId);
     const commissionRate = wallet?.commissionRate || 0.1;
 
-    const transactions = bookings.map((booking) => {
+    const creditTransactions = incomingBookings.map((booking) => {
       const amount = booking.paymentAmount || 0;
       const commission = amount * commissionRate;
       const netAmount = amount - commission;
 
       return {
         id: booking._id,
-        type: "earning",
+        type: "credit",
         description: `Delivery: ${booking.packageId?.packageName || "Package"}`,
-        amount: amount,
+        amount: netAmount,
         commission: commission,
         netAmount: netAmount,
         status: booking.paymentStatus || "pending",
@@ -170,6 +197,35 @@ export const getTransactionHistory = async (req, res) => {
         packageId: booking.packageId?._id || booking.packageId,
       };
     });
+
+    const debitTransactions = outgoingBookings.map((booking) => {
+      const amount = Number(booking.paymentAmount || 0);
+      return {
+        id: `debit_${booking._id}`,
+        type: "debit",
+        description: `Payment: ${booking.packageId?.packageName || "Package"}`,
+        amount,
+        status: booking.paymentStatus || "pending",
+        date: booking.createdAt,
+        traveler: booking.travelerId?.name || "Traveler",
+        packageId: booking.packageId?._id || booking.packageId,
+      };
+    });
+
+    const walletTransactions = (wallet.transactionHistory || []).map((transaction) => ({
+      id: transaction._id,
+      type: transaction.type,
+      amount: transaction.amount,
+      status: transaction.status,
+      description: transaction.description,
+      date: transaction.createdAt,
+      category: transaction.category,
+      bookingId: transaction.bookingId,
+    }));
+
+    const transactions = [...creditTransactions, ...debitTransactions, ...walletTransactions]
+      .sort((a, b) => new Date(b.date) - new Date(a.date))
+      .slice(0, parseInt(limit));
 
     res.status(200).json({
       message: "Transaction history retrieved successfully",
@@ -197,7 +253,7 @@ export const getPayoutHistory = async (req, res) => {
       .populate("senderId", "name")
       .sort({ paidAt: -1 });
 
-    const wallet = await Wallet.findOne({ userId });
+    const wallet = await getOrCreateWallet(userId);
     const commissionRate = wallet?.commissionRate || 0.1;
 
     const payouts = bookings.map((booking) => {
@@ -236,8 +292,9 @@ export const requestPayout = async (req, res) => {
   try {
     const { userId } = req.params;
     const { amount } = req.body;
+    const numericAmount = Number(amount || 0);
 
-    const wallet = await Wallet.findOne({ userId });
+    const wallet = await getOrCreateWallet(userId);
     if (!wallet) {
       return res.status(404).json({ message: "Wallet not found" });
     }
@@ -248,7 +305,13 @@ export const requestPayout = async (req, res) => {
       });
     }
 
-    if (amount > wallet.availableBalance) {
+    if (!numericAmount || numericAmount <= 0) {
+      return res.status(400).json({
+        message: "Please provide a valid amount",
+      });
+    }
+
+    if (numericAmount > wallet.availableBalance) {
       return res.status(400).json({
         message: "Insufficient balance",
       });
@@ -262,21 +325,68 @@ export const requestPayout = async (req, res) => {
     // })
 
     // For now, simulate payout
-    wallet.availableBalance -= amount;
-    wallet.totalPayouts += amount;
+    wallet.availableBalance -= numericAmount;
+    wallet.totalPayouts += numericAmount;
+    wallet.transactionHistory.push({
+      amount: numericAmount,
+      type: "debit",
+      category: "withdrawal",
+      status: "pending",
+      description: "Traveler withdrawal request",
+    });
     await wallet.save();
 
     res.status(200).json({
       message: "Payout requested successfully",
       data: {
         payoutId: `payout_${Date.now()}`,
-        amount: amount,
+        amount: numericAmount,
         status: "pending",
         estimatedArrival: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000), // 2 days
       },
     });
   } catch (error) {
     console.error("Request payout error:", error);
+    res.status(500).json({
+      message: "Server error",
+      error: error.message,
+    });
+  }
+};
+
+// Add funds to sender wallet (basic mock top-up)
+export const addFunds = async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { amount } = req.body;
+    const numericAmount = Number(amount || 0);
+
+    if (!numericAmount || numericAmount <= 0) {
+      return res.status(400).json({
+        message: "Please provide a valid amount",
+      });
+    }
+
+    const wallet = await getOrCreateWallet(userId);
+    wallet.availableBalance += numericAmount;
+    wallet.transactionHistory.push({
+      amount: numericAmount,
+      type: "credit",
+      category: "deposit",
+      status: "completed",
+      description: "Funds added by sender",
+    });
+    await wallet.save();
+
+    res.status(200).json({
+      message: "Funds added successfully",
+      data: {
+        availableBalance: wallet.availableBalance,
+        amountAdded: numericAmount,
+      },
+    });
+  } catch (error) {
+    console.error("Add funds error:", error);
     res.status(500).json({
       message: "Server error",
       error: error.message,

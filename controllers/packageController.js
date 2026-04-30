@@ -1,6 +1,48 @@
 import Package from "../models/Package.js";
 import User from "../models/User.js";
 
+const normalizeLocation = (address = {}) => {
+  const city = (address?.city || "").toString().trim().toLowerCase();
+  const state = (address?.state || "").toString().trim().toLowerCase();
+  const country = (address?.country || "").toString().trim().toLowerCase();
+  const street = (address?.street || "").toString().trim().toLowerCase();
+  return city || state || country || street;
+};
+
+const formatLocationName = (address) => {
+  if (!address) return "N/A";
+
+  if (typeof address === "string") {
+    return address.trim() || "N/A";
+  }
+
+  return (
+    address?.location?.name ||
+    address?.city ||
+    address?.street ||
+    address?.state ||
+    address?.country ||
+    "N/A"
+  );
+};
+
+const mapSenderPackage = (packageDoc) => ({
+  _id: packageDoc._id,
+  packageName: packageDoc.packageName,
+  packageType: packageDoc.packageType,
+  weight: packageDoc.weight,
+  compensation: packageDoc.compensation || 0,
+  status: packageDoc.status,
+  createdAt: packageDoc.createdAt,
+  pickupLocation: {
+    name: formatLocationName(packageDoc.originAddress),
+  },
+  dropoffLocation: {
+    name: formatLocationName(packageDoc.destinationAddress),
+  },
+  trackingNumber: packageDoc.trackingNumber,
+});
+
 // Generate unique tracking number
 const generateTrackingNumber = () => {
   const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
@@ -41,6 +83,7 @@ export const createPackage = async (req, res) => {
     }
     let sender = req.body.sender;
     let receiver = req.body.receiver;
+    let receiverDetails = req.body.receiverDetails;
     let originAddress = req.body.originAddress;
     let destinationAddress = req.body.destinationAddress;
     let estimatedDeliveryDate = req.body.estimatedDeliveryDate;
@@ -50,6 +93,47 @@ export const createPackage = async (req, res) => {
       return res.status(400).json({
         message: "Missing required fields: userId, packageName, sender, receiver",
       });
+    }
+
+    // Validate receiverDetails if provided
+    let parsedReceiverDetails = null;
+    if (receiverDetails) {
+      if (typeof receiverDetails === "string") {
+        try {
+          parsedReceiverDetails = JSON.parse(receiverDetails);
+        } catch (e) {
+          parsedReceiverDetails = receiverDetails;
+        }
+      } else {
+        parsedReceiverDetails = receiverDetails;
+      }
+
+      // Validate receiver details
+      if (!parsedReceiverDetails.name || !parsedReceiverDetails.name.trim()) {
+        return res.status(400).json({
+          message: "Receiver name is required",
+        });
+      }
+
+      if (!parsedReceiverDetails.phone || !parsedReceiverDetails.phone.trim()) {
+        return res.status(400).json({
+          message: "Receiver phone number is required",
+        });
+      }
+
+      // Validate Pakistani phone format
+      const phoneRegex = /^03[0-9]{9}$/;
+      if (!phoneRegex.test(parsedReceiverDetails.phone.replace(/[^\d]/g, ""))) {
+        return res.status(400).json({
+          message: "Receiver phone must be in Pakistani format (03XXXXXXXXX)",
+        });
+      }
+
+      if (!parsedReceiverDetails.address || !parsedReceiverDetails.address.trim()) {
+        return res.status(400).json({
+          message: "Receiver address is required",
+        });
+      }
     }
 
     // Verify user exists and get user info for sender
@@ -87,6 +171,14 @@ export const createPackage = async (req, res) => {
       } catch (e) {
         parsedDestinationAddress = { street: destinationAddress };
       }
+    }
+
+    const normalizedOrigin = normalizeLocation(parsedOriginAddress);
+    const normalizedDestination = normalizeLocation(parsedDestinationAddress);
+    if (normalizedOrigin && normalizedDestination && normalizedOrigin === normalizedDestination) {
+      return res.status(400).json({
+        message: "Source and destination cannot be the same.",
+      });
     }
 
     // Parse sender and receiver if they are strings
@@ -187,6 +279,14 @@ export const createPackage = async (req, res) => {
       photos: photos || [],
       sender: parsedSender,
       receiver: parsedReceiver,
+      receiverDetails: parsedReceiverDetails
+        ? {
+            name: parsedReceiverDetails.name.trim(),
+            phone: parsedReceiverDetails.phone.trim(),
+            email: parsedReceiverDetails.email ? parsedReceiverDetails.email.trim() : undefined,
+            address: parsedReceiverDetails.address.trim(),
+          }
+        : undefined,
       originAddress: parsedOriginAddress || parsedSender.address,
       destinationAddress: parsedDestinationAddress || parsedReceiver.address,
       currentLocation: parsedOriginAddress?.city
@@ -310,6 +410,34 @@ export const getRecentPackages = async (req, res) => {
   } catch (error) {
     console.error("Get recent packages error:", error);
     res.status(500).json({
+      message: "Server error",
+      error: error.message,
+    });
+  }
+};
+
+export const getSenderPackages = async (req, res) => {
+  try {
+    const senderId = req.user?._id;
+
+    if (!senderId) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+
+    const packages = await Package.find({ userId: senderId })
+      .sort({ createdAt: -1 })
+      .select(
+        "trackingNumber packageName packageType weight compensation status createdAt originAddress destinationAddress"
+      )
+      .lean();
+
+    return res.status(200).json({
+      message: "Sender packages retrieved successfully",
+      data: packages.map(mapSenderPackage),
+    });
+  } catch (error) {
+    console.error("Get sender packages error:", error);
+    return res.status(500).json({
       message: "Server error",
       error: error.message,
     });

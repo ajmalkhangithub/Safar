@@ -1,6 +1,14 @@
 import Trip from "../models/Trip.js";
 import User from "../models/User.js";
 
+const normalizeLocation = (address = {}) => {
+  const city = (address?.city || "").toString().trim().toLowerCase();
+  const state = (address?.state || "").toString().trim().toLowerCase();
+  const country = (address?.country || "").toString().trim().toLowerCase();
+  const street = (address?.street || "").toString().trim().toLowerCase();
+  return city || state || country || street;
+};
+
 // Create a new trip
 export const createTrip = async (req, res) => {
   try {
@@ -50,6 +58,14 @@ export const createTrip = async (req, res) => {
       } catch (e) {
         parsedDestinationAddress = { street: destinationAddress };
       }
+    }
+
+    const normalizedOrigin = normalizeLocation(parsedOriginAddress);
+    const normalizedDestination = normalizeLocation(parsedDestinationAddress);
+    if (normalizedOrigin && normalizedDestination && normalizedOrigin === normalizedDestination) {
+      return res.status(400).json({
+        message: "Source and destination cannot be the same.",
+      });
     }
 
     // Parse accepted item types if it's a string
@@ -175,6 +191,16 @@ export const updateTrip = async (req, res) => {
       } catch (e) {
         updateData.destinationAddress = { street: updateData.destinationAddress };
       }
+    }
+
+    const nextOrigin = updateData.originAddress || trip.originAddress;
+    const nextDestination = updateData.destinationAddress || trip.destinationAddress;
+    const normalizedOrigin = normalizeLocation(nextOrigin);
+    const normalizedDestination = normalizeLocation(nextDestination);
+    if (normalizedOrigin && normalizedDestination && normalizedOrigin === normalizedDestination) {
+      return res.status(400).json({
+        message: "Source and destination cannot be the same.",
+      });
     }
 
     // Parse dates if provided

@@ -1,4 +1,5 @@
 import bcrypt from "bcryptjs";
+import jwt from "jsonwebtoken";
 import User from "../models/User.js";
 
 export const loginUser = async (req, res) => {
@@ -15,12 +16,19 @@ export const loginUser = async (req, res) => {
       return res.status(400).json({ message: "Invalid credentials" });
     }
 
+    const token = jwt.sign(
+      { id: user._id },
+      process.env.JWT_SECRET || "SECRET_KEY",
+      { expiresIn: "7d" }
+    );
+
     // Return user data with profile completion status
     // Use activeRole if available, otherwise fall back to role field for backward compatibility
     const userRole = user.activeRole || user.role || null;
     
     res.status(200).json({
       message: "Login successful",
+      token,
       data: {
         userId: user._id,
         email: user.email,

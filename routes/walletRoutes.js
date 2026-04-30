@@ -6,6 +6,7 @@ import {
   getTransactionHistory,
   getPayoutHistory,
   requestPayout,
+  addFunds,
 } from "../controllers/walletController.js";
 
 const router = express.Router();
@@ -27,5 +28,8 @@ router.get("/:userId/payouts", getPayoutHistory);
 
 // Request payout
 router.post("/:userId/payout", requestPayout);
+
+// Add funds (sender)
+router.post("/:userId/add-funds", addFunds);
 
 export default router;

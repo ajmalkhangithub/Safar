@@ -195,6 +195,8 @@ export const getProfile = async (req, res) => {
         profileComplete: user.profileComplete || false,
         language: user.language || 'en',
         kycStatus: user.kycStatus || 'not_submitted',
+        averageRating: user.averageRating || 0,
+        totalReviews: user.totalReviews || 0,
       },
     });
   } catch (error) {

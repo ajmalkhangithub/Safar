@@ -41,7 +41,9 @@ export const getSenderDashboardStats = async (req, res) => {
     const recentRequests = await Package.find({ userId })
       .sort({ createdAt: -1 })
       .limit(5)
-      .select("packageName status trackingNumber createdAt destinationAddress _id");
+      .select(
+        "packageName description packageType compensation status trackingNumber createdAt destinationAddress originAddress sender _id"
+      );
 
     // Get booking requests for these packages to show status
     const packageIds = recentRequests.map(pkg => pkg._id);

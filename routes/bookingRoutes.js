@@ -10,6 +10,7 @@ import {
   updatePaymentStatus,
   acceptPackageDirectly,
   rejectPackageDirectly,
+  updateBookingDeliveryStatus,
 } from "../controllers/bookingController.js";
 import {
   getTravelerBookings,
@@ -51,6 +52,9 @@ router.patch("/:bookingId/cancel", cancelBookingRequest);
 
 // Update payment status
 router.patch("/:bookingId/payment-status", updatePaymentStatus);
+
+// Update booking-level delivery status
+router.patch("/:bookingId/delivery-status", updateBookingDeliveryStatus);
 
 // Accept package directly (creates booking request automatically)
 router.post("/packages/:packageId/accept", acceptPackageDirectly);

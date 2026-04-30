@@ -22,6 +22,11 @@ const tripSchema = new mongoose.Schema(
       state: String,
       country: String,
       zipCode: String,
+      location: {
+        name: String,
+        lat:  Number,
+        lng:  Number,
+      },
     },
     destinationAddress: {
       street: String,
@@ -29,6 +34,11 @@ const tripSchema = new mongoose.Schema(
       state: String,
       country: String,
       zipCode: String,
+      location: {
+        name: String,
+        lat:  Number,
+        lng:  Number,
+      },
     },
     // Trip Dates
     departureDate: {

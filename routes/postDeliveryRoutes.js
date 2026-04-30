@@ -24,4 +24,7 @@ router.get("/booking/:bookingId", getPostDeliveryData);
 // Get reviews for a traveler
 router.get("/traveler/:userId/reviews", getTravelerReviews);
 
+// Generic user reviews
+router.get("/user/:userId/reviews", getTravelerReviews);
+
 export default router;

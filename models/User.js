@@ -62,6 +62,16 @@ const userSchema = new mongoose.Schema(
             enum: ['en', 'ur', 'ar', 'es', 'fr', 'de', 'zh', 'hi'], 
             default: 'en' 
           },
+          averageRating: {
+            type: Number,
+            default: 0,
+            min: 0,
+            max: 5,
+          },
+          totalReviews: {
+            type: Number,
+            default: 0,
+          },
   },
   { timestamps: true }
 );

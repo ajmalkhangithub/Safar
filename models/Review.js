@@ -22,6 +22,16 @@ const reviewSchema = new mongoose.Schema(
       ref: "User",
       required: true, // Traveler being reviewed
     },
+    reviewerRole: {
+      type: String,
+      enum: ["sender", "traveler"],
+      required: true,
+    },
+    reviewedRole: {
+      type: String,
+      enum: ["sender", "traveler"],
+      required: true,
+    },
     rating: {
       type: Number,
       required: true,

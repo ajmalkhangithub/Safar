@@ -72,6 +72,13 @@ const packageSchema = new mongoose.Schema(
         zipCode: String,
       },
     },
+    // Receiver Details (actual recipient information for dropoff)
+    receiverDetails: {
+      name: { type: String, required: true },
+      phone: { type: String, required: true },
+      email: { type: String },
+      address: { type: String },
+    },
     // Shipping Details
     originAddress: {
       street: String,
@@ -79,6 +86,11 @@ const packageSchema = new mongoose.Schema(
       state: String,
       country: String,
       zipCode: String,
+      location: {
+        name: String,
+        lat:  Number,
+        lng:  Number,
+      },
     },
     destinationAddress: {
       street: String,
@@ -86,6 +98,11 @@ const packageSchema = new mongoose.Schema(
       state: String,
       country: String,
       zipCode: String,
+      location: {
+        name: String,
+        lat:  Number,
+        lng:  Number,
+      },
     },
     currentLocation: {
       type: String,

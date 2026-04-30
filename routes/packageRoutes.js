@@ -8,6 +8,7 @@ import {
   updatePackageStatus,
   getPackageById,
   getAvailablePackagesForTravelers,
+  getSenderPackages,
 } from "../controllers/packageController.js";
 import {
   getSenderDashboardStats,
@@ -18,6 +19,7 @@ import {
   getMatchingTrips,
   sendBookingRequest,
 } from "../controllers/packageRequestsController.js";
+import { verifyToken } from "../middleware/auth.js";
 import upload from "../middleware/upload.js";
 
 const router = express.Router();
@@ -27,6 +29,9 @@ router.post("/create", upload.array("photos", 10), createPackage);
 
 // Track package by tracking number (public)
 router.get("/track/:trackingNumber", trackPackage);
+
+// Sender order history (authenticated)
+router.get("/sender", verifyToken, getSenderPackages);
 
 // Get recent deliveries for a user
 router.get("/deliveries/:userId", getRecentDeliveries);

@@ -556,3 +556,73 @@ export const updatePaymentStatus = async (req, res) => {
     });
   }
 };
+
+// Update booking delivery status (traveler only)
+export const updateBookingDeliveryStatus = async (req, res) => {
+  try {
+    const { bookingId } = req.params;
+    const { deliveryStatus, userId } = req.body;
+
+    if (!deliveryStatus || !["pending", "en_route", "delivered"].includes(deliveryStatus)) {
+      return res.status(400).json({
+        message: "Valid deliveryStatus (pending, en_route, delivered) is required",
+      });
+    }
+
+    const bookingRequest = await BookingRequest.findById(bookingId);
+    if (!bookingRequest) {
+      return res.status(404).json({ message: "Booking request not found" });
+    }
+
+    if (bookingRequest.travelerId.toString() !== userId) {
+      return res.status(403).json({
+        message: "Only the assigned traveler can update delivery status",
+      });
+    }
+
+    if (bookingRequest.status !== "accepted") {
+      return res.status(400).json({
+        message: "Delivery status can only be updated for accepted bookings",
+      });
+    }
+
+    bookingRequest.deliveryStatus = deliveryStatus;
+    if (deliveryStatus === "delivered") {
+      bookingRequest.travelerLocation = {
+        ...bookingRequest.travelerLocation,
+        updatedAt: new Date(),
+      };
+    }
+    await bookingRequest.save();
+
+    if (bookingRequest.packageId) {
+      const packageStatusMap = {
+        pending: "confirmed",
+        en_route: "in_transit",
+        delivered: "delivered",
+      };
+      await Package.findByIdAndUpdate(bookingRequest.packageId, {
+        status: packageStatusMap[deliveryStatus] || "confirmed",
+        ...(deliveryStatus === "delivered" ? { actualDeliveryDate: new Date() } : {}),
+      });
+    }
+
+    if (deliveryStatus === "delivered") {
+      const io = req.app.get("io");
+      if (io) {
+        io.to(`tracking_${bookingId}`).emit("tracking_ended", { bookingId });
+      }
+    }
+
+    res.status(200).json({
+      message: "Booking delivery status updated successfully",
+      data: bookingRequest,
+    });
+  } catch (error) {
+    console.error("Update booking delivery status error:", error);
+    res.status(500).json({
+      message: "Server error",
+      error: error.message,
+    });
+  }
+};

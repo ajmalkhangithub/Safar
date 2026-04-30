@@ -5,11 +5,27 @@ import Trip from "../models/Trip.js";
 import User from "../models/User.js";
 import upload from "../middleware/upload.js";
 
+const updateUserAverageRating = async (userId) => {
+  const reviews = await Review.find({ reviewedUserId: userId }).select("rating");
+  const totalReviews = reviews.length;
+  const averageRating =
+    totalReviews > 0
+      ? reviews.reduce((sum, review) => sum + review.rating, 0) / totalReviews
+      : 0;
+
+  await User.findByIdAndUpdate(userId, {
+    averageRating,
+    totalReviews,
+  });
+
+  return { averageRating, totalReviews };
+};
+
 // Submit proof of delivery and review
 export const submitPostDelivery = async (req, res) => {
   try {
     const { bookingId, rating, reviewText } = req.body;
-    const reviewerId = req.params.userId; // Sender's userId
+    const reviewerId = req.params.userId;
 
     if (!bookingId || !rating) {
       return res.status(400).json({
@@ -33,10 +49,12 @@ export const submitPostDelivery = async (req, res) => {
       return res.status(404).json({ message: "Booking not found" });
     }
 
-    // Verify user is the sender
-    if (booking.senderId._id.toString() !== reviewerId) {
+    const isSender = booking.senderId._id.toString() === reviewerId;
+    const isTraveler = booking.travelerId._id.toString() === reviewerId;
+
+    if (!isSender && !isTraveler) {
       return res.status(403).json({
-        message: "Only the sender can submit post-delivery review",
+        message: "Only sender or traveler can submit post-delivery review",
       });
     }
 
@@ -85,12 +103,18 @@ export const submitPostDelivery = async (req, res) => {
       });
     }
 
+    const reviewedUserId = isSender ? booking.travelerId._id : booking.senderId._id;
+    const reviewerRole = isSender ? "sender" : "traveler";
+    const reviewedRole = isSender ? "traveler" : "sender";
+
     // Create review
     const review = new Review({
       bookingId,
       packageId: packageData._id,
       reviewerId,
-      reviewedUserId: booking.travelerId._id,
+      reviewedUserId,
+      reviewerRole,
+      reviewedRole,
       rating: parseInt(rating),
       reviewText: reviewText || "",
       proofOfDelivery: {
@@ -102,19 +126,19 @@ export const submitPostDelivery = async (req, res) => {
 
     await review.save();
 
-    // Update traveler's average rating
-    const travelerReviews = await Review.find({
-      reviewedUserId: booking.travelerId._id,
-    });
-    const averageRating =
-      travelerReviews.reduce((sum, r) => sum + r.rating, 0) /
-      travelerReviews.length;
+    const { averageRating, totalReviews } = await updateUserAverageRating(reviewedUserId);
 
-    // Update trip's traveler rating
-    const trip = await Trip.findOne({ userId: booking.travelerId._id });
-    if (trip) {
-      trip.travelerRating = averageRating;
-      await trip.save();
+    // Update traveler's trip rating for matching when traveler is being reviewed.
+    if (reviewedRole === "traveler") {
+      const trips = await Trip.find({ userId: reviewedUserId });
+      if (trips.length > 0) {
+        await Promise.all(
+          trips.map(async (trip) => {
+            trip.travelerRating = averageRating;
+            await trip.save();
+          })
+        );
+      }
     }
 
     // Populate review data for response
@@ -125,7 +149,14 @@ export const submitPostDelivery = async (req, res) => {
 
     res.status(201).json({
       message: "Post-delivery review submitted successfully",
-      data: review,
+      data: {
+        review,
+        reviewedUser: {
+          userId: reviewedUserId,
+          averageRating: Number(averageRating.toFixed(1)),
+          totalReviews,
+        },
+      },
     });
   } catch (error) {
     console.error("Submit post-delivery error:", error);
@@ -161,10 +192,20 @@ export const getPostDeliveryData = async (req, res) => {
       });
     }
 
-    // Check if review already exists
+    // Check if review already exists for current reviewer
     const existingReview = await Review.findOne({
       bookingId,
+      reviewerId: userId,
+    });
+
+    const senderReview = await Review.findOne({
+      bookingId,
       reviewerId: booking.senderId._id,
+    });
+
+    const travelerReview = await Review.findOne({
+      bookingId,
+      reviewerId: booking.travelerId._id,
     });
 
     res.status(200).json({
@@ -175,6 +216,8 @@ export const getPostDeliveryData = async (req, res) => {
         traveler: booking.travelerId,
         hasReview: !!existingReview,
         review: existingReview,
+        senderReview,
+        travelerReview,
       },
     });
   } catch (error) {
@@ -196,18 +239,14 @@ export const getTravelerReviews = async (req, res) => {
       .populate("packageId", "packageName")
       .sort({ createdAt: -1 });
 
-    // Calculate average rating
-    const averageRating =
-      reviews.length > 0
-        ? reviews.reduce((sum, r) => sum + r.rating, 0) / reviews.length
-        : 0;
+    const { averageRating, totalReviews } = await updateUserAverageRating(userId);
 
     res.status(200).json({
-      message: "Traveler reviews retrieved successfully",
+      message: "User reviews retrieved successfully",
       data: {
         reviews,
-        averageRating: averageRating.toFixed(1),
-        totalReviews: reviews.length,
+        averageRating: Number(averageRating.toFixed(1)),
+        totalReviews,
       },
     });
   } catch (error) {

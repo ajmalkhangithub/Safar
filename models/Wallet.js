@@ -33,6 +33,10 @@ const walletSchema = new mongoose.Schema(
       type: Number,
       default: 0, // Pending payout
     },
+    pendingPayments: {
+      type: Number,
+      default: 0, // Pending outgoing payments (sender side)
+    },
     totalEarnings: {
       type: Number,
       default: 0, // Total earnings ever
@@ -50,6 +54,29 @@ const walletSchema = new mongoose.Schema(
       type: Number,
       default: 0.1, // 10% platform commission
     },
+    transactionHistory: [
+      {
+        amount: { type: Number, required: true },
+        type: {
+          type: String,
+          enum: ["credit", "debit"],
+          required: true,
+        },
+        category: {
+          type: String,
+          enum: ["earning", "payment", "withdrawal", "deposit", "refund", "adjustment"],
+          default: "adjustment",
+        },
+        status: {
+          type: String,
+          enum: ["pending", "completed", "failed"],
+          default: "completed",
+        },
+        description: { type: String, default: "" },
+        bookingId: { type: mongoose.Schema.Types.ObjectId, ref: "BookingRequest" },
+        createdAt: { type: Date, default: Date.now },
+      },
+    ],
   },
   { timestamps: true }
 );
